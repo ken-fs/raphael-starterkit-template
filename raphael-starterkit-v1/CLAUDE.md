@@ -14,7 +14,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Architecture
 
-This is a Next.js App Router application implementing a Chinese name generator SaaS with subscription and credit systems.
+This is a Next.js App Router application implementing a Chinese name generator SaaS with subscription and credit systems, **targeting English-speaking users primarily in Europe and North America**.
+
+## Content Strategy
+- **Primary Language**: English - all user-facing content should be written in English first
+- **Target Audience**: English-speaking users interested in Chinese names and culture
+- **Content Tone**: Professional, culturally respectful, and accessible to Western audiences
 
 ### Tech Stack
 - **Framework**: Next.js 14+ with App Router
@@ -112,3 +117,10 @@ Key environment variables needed:
 - PDF generation uses Puppeteer for creating name certificates
 - TTS functionality integrated for name pronunciation
 - Responsive design with mobile-first approach
+
+## Localization Guidelines
+
+- **Default Language**: English - all new content, UI text, and user communications should be in English
+- **Content Creation**: When adding new features or copy, write in English first
+- **Cultural Context**: Provide clear explanations of Chinese cultural concepts for Western audiences
+- **User Experience**: Design flows and explanations should be intuitive for English-speaking users unfamiliar with Chinese naming traditions
