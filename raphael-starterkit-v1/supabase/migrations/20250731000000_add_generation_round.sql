@@ -3,7 +3,14 @@
 
 -- Add generation_round column to generated_names table
 ALTER TABLE public.generated_names 
-ADD COLUMN generation_round integer NOT NULL DEFAULT 1;
+ADD COLUMN IF NOT EXISTS generation_round integer;
+
+-- Ensure desired defaults and nullability
+ALTER TABLE public.generated_names 
+ALTER COLUMN generation_round SET DEFAULT 1;
+-- Safe even if already NOT NULL
+ALTER TABLE public.generated_names 
+ALTER COLUMN generation_round SET NOT NULL;
 
 -- Create index for better performance when querying by generation round
 CREATE INDEX IF NOT EXISTS generated_names_round_idx ON public.generated_names(generation_round);

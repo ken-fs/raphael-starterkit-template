@@ -1,59 +1,88 @@
--- 积分核算和审计报表SQL脚本
+-- 积分核算和审计报表 SQL 脚本
 -- 用于追踪所有积分操作，确保核算清晰
 
--- ==== 1. 用户积分完整审计报告 ====
--- 替换 'your_email@example.com' 为实际邮箱
-SELECT 
-    '=== USER CREDITS AUDIT REPORT ===' as report_section,
-    au.email as user_email,
-    au.id as user_id,
-    c.id as customer_id,
-    c.credits as current_credits,
-    c.created_at as customer_since,
-    c.updated_at as last_updated
-FROM auth.users au
-LEFT JOIN public.customers c ON au.id = c.user_id
-WHERE au.email = 'your_email@example.com'
+-- 使用方式（推荐）：先设置参数，再执行整段脚本
+--   SET app.target_user_email = 'user@example.com';
 
-UNION ALL
+-- ==== 1 & 2. 用户基本信息 + 积分历史详情（时间倒序） ====
+WITH params AS (
+    SELECT lower(COALESCE(NULLIF(current_setting('app.target_user_email', true), ''), 'your_email@example.com')) AS target_email
+),
+report_union AS (
+    -- 1) 用户当前积分概览
+    SELECT 
+        '=== USER CREDITS AUDIT REPORT ===' as report_section,
+        au.email as col2,
+        au.id as user_id,
+        c.id as customer_id,
+        c.credits as current_credits,
+        c.created_at as customer_since,
+        c.updated_at as last_updated,
+        1 as section_order,
+        NULL::timestamptz as order_created_at
+    FROM auth.users au
+    LEFT JOIN public.customers c ON au.id = c.user_id
+    CROSS JOIN params p
+    WHERE lower(au.email) = p.target_email
 
--- ==== 2. 积分历史记录详情 ====
-SELECT 
-    '=== CREDITS HISTORY DETAILS ===' as report_section,
-    CONCAT(
-        ch.created_at::date, ' | ',
-        CASE WHEN ch.type = 'add' THEN '+' ELSE '-' END,
-        ch.amount, ' | ',
-        ch.description, ' | ',
-        COALESCE(ch.metadata->>'source', 'unknown')
-    ) as transaction_details,
-    NULL, NULL, NULL, NULL, NULL
-FROM auth.users au
-JOIN public.customers c ON au.id = c.user_id
-JOIN public.credits_history ch ON c.id = ch.customer_id
-WHERE au.email = 'your_email@example.com'
-ORDER BY ch.created_at DESC;
+    UNION ALL
 
--- ==== 3. 积分流水账汇总 ====
--- 替换 'your_email@example.com' 为实际邮箱
-WITH user_credits_summary AS (
+    -- 2) 历史流水明细（合并到同一结果集中，按时间倒序）
+    SELECT 
+        '=== CREDITS HISTORY DETAILS ===' as report_section,
+        CONCAT(
+            ch.created_at::date, ' | ',
+            CASE WHEN ch.type = 'add' THEN '+' ELSE '-' END,
+            ch.amount, ' | ',
+            ch.description, ' | ',
+            COALESCE(ch.metadata->>'source', 'unknown')
+        ) as col2,
+        NULL::uuid as user_id,
+        NULL::uuid as customer_id,
+        NULL::integer as current_credits,
+        NULL::timestamptz as customer_since,
+        NULL::timestamptz as last_updated,
+        2 as section_order,
+        ch.created_at as order_created_at
+    FROM auth.users au
+    JOIN public.customers c ON au.id = c.user_id
+    JOIN public.credits_history ch ON c.id = ch.customer_id
+    CROSS JOIN params p
+    WHERE lower(au.email) = p.target_email
+)
+SELECT report_section,
+       col2 as user_email_or_details,
+        user_id,
+        customer_id,
+        current_credits,
+        customer_since,
+        last_updated
+FROM report_union
+ORDER BY section_order, order_created_at DESC;
+
+-- ==== 3. 积分流水账汇总（与当前余额校验） ====
+WITH params AS (
+    SELECT lower(COALESCE(NULLIF(current_setting('app.target_user_email', true), ''), 'your_email@example.com')) AS target_email
+),
+user_credits_summary AS (
     SELECT 
         au.email,
         c.credits as current_credits,
-        -- 计算总充值
+        -- 总充值
         COALESCE(SUM(CASE WHEN ch.type = 'add' THEN ch.amount ELSE 0 END), 0) as total_credits_added,
-        -- 计算总消费
+        -- 总消耗
         COALESCE(SUM(CASE WHEN ch.type = 'subtract' THEN ch.amount ELSE 0 END), 0) as total_credits_used,
-        -- 计算理论余额
+        -- 理论余额（充值为正，消耗为负）
         COALESCE(SUM(CASE WHEN ch.type = 'add' THEN ch.amount ELSE -ch.amount END), 0) as calculated_balance,
-        -- 统计操作次数
+        -- 操作次数
         COUNT(CASE WHEN ch.type = 'add' THEN 1 END) as total_additions,
         COUNT(CASE WHEN ch.type = 'subtract' THEN 1 END) as total_subtractions,
         COUNT(*) as total_transactions
     FROM auth.users au
     LEFT JOIN public.customers c ON au.id = c.user_id
     LEFT JOIN public.credits_history ch ON c.id = ch.customer_id
-    WHERE au.email = 'your_email@example.com'
+    CROSS JOIN params p
+    WHERE lower(au.email) = p.target_email
     GROUP BY au.email, c.credits
 )
 SELECT 
@@ -63,10 +92,10 @@ SELECT
     total_credits_added,
     total_credits_used,
     calculated_balance,
-    -- 检查账务是否平衡
+    -- 账务是否平衡
     CASE 
         WHEN current_credits = calculated_balance THEN '✅ BALANCED'
-        ELSE '❌ UNBALANCED (Diff: ' || (current_credits - calculated_balance) || ')'
+        ELSE '⚠️ UNBALANCED (Diff: ' || (current_credits - calculated_balance) || ')'
     END as balance_status,
     total_additions,
     total_subtractions,
@@ -83,7 +112,7 @@ SELECT
     ch.description,
     ch.metadata->>'source' as operation_source,
     CASE 
-        WHEN ch.metadata->>'admin_action' = 'true' THEN '👨‍💼 ADMIN'
+        WHEN ch.metadata->>'admin_action' = 'true' THEN '👨‍💻 ADMIN'
         ELSE '🤖 SYSTEM'
     END as action_type,
     ch.metadata->>'credits_before' as credits_before,
@@ -92,7 +121,7 @@ FROM public.credits_history ch
 JOIN public.customers c ON ch.customer_id = c.id
 JOIN auth.users au ON c.user_id = au.id
 WHERE ch.type = 'add' 
-AND (ch.metadata->>'admin_action' = 'true' OR ch.description ILIKE '%manual%')
+  AND (ch.metadata->>'admin_action' = 'true' OR ch.description ILIKE '%manual%')
 ORDER BY ch.created_at DESC;
 
 -- ==== 5. 系统完整性检查 ====
@@ -107,3 +136,4 @@ SELECT
 FROM auth.users au
 FULL OUTER JOIN public.customers c ON au.id = c.user_id
 FULL OUTER JOIN public.credits_history ch ON c.id = ch.customer_id;
+

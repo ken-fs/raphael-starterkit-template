@@ -47,19 +47,20 @@ BEGIN
         )
         SELECT 
             uc.user_id,
-            COALESCE(au.email, 'unknown@example.com'),
+            lower(COALESCE(au.email, 'unknown@example.com')),
             COALESCE(uc.remaining_credits, 0),
-            'migrated_' || uc.user_id::text, -- Temporary creem_customer_id
-            uc.created_at,
+            COALESCE(c_existing.creem_customer_id, 'migrated_' || uc.user_id::text) AS creem_customer_id,
+            COALESCE(c_existing.created_at, uc.created_at),
             uc.updated_at,
-            jsonb_build_object(
+            COALESCE(c_existing.metadata, '{}'::jsonb) || jsonb_build_object(
                 'migrated_from', 'chinesename',
                 'original_total_credits', uc.total_credits,
                 'migration_date', now()
             )
         FROM user_credits uc
         LEFT JOIN auth.users au ON uc.user_id = au.id
-        ON CONFLICT (user_id) DO UPDATE SET
+        LEFT JOIN public.customers c_existing ON c_existing.user_id = uc.user_id
+        ON CONFLICT (creem_customer_id) DO UPDATE SET
             credits = EXCLUDED.credits,
             updated_at = EXCLUDED.updated_at,
             metadata = customers.metadata || EXCLUDED.metadata;
@@ -145,22 +146,62 @@ ALTER TABLE public.user_credits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.credit_transactions ENABLE ROW LEVEL SECURITY;
 
 -- Policies for user_credits
-CREATE POLICY IF NOT EXISTS "Users can view their own credits" 
-ON public.user_credits FOR SELECT 
-USING (auth.uid() = user_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'user_credits'
+          AND policyname = 'Users can view their own credits'
+    ) THEN
+        CREATE POLICY "Users can view their own credits"
+        ON public.user_credits FOR SELECT
+        USING (auth.uid() = user_id);
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Service role can manage user credits" 
-ON public.user_credits FOR ALL 
-USING (auth.role() = 'service_role');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'user_credits'
+          AND policyname = 'Service role can manage user credits'
+    ) THEN
+        CREATE POLICY "Service role can manage user credits"
+        ON public.user_credits FOR ALL
+        USING (auth.role() = 'service_role');
+    END IF;
+END $$;
 
 -- Policies for credit_transactions
-CREATE POLICY IF NOT EXISTS "Users can view their own transactions" 
-ON public.credit_transactions FOR SELECT 
-USING (auth.uid() = user_id);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'credit_transactions'
+          AND policyname = 'Users can view their own transactions'
+    ) THEN
+        CREATE POLICY "Users can view their own transactions"
+        ON public.credit_transactions FOR SELECT
+        USING (auth.uid() = user_id);
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Service role can manage credit transactions" 
-ON public.credit_transactions FOR ALL 
-USING (auth.role() = 'service_role');
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename = 'credit_transactions'
+          AND policyname = 'Service role can manage credit transactions'
+    ) THEN
+        CREATE POLICY "Service role can manage credit transactions"
+        ON public.credit_transactions FOR ALL
+        USING (auth.role() = 'service_role');
+    END IF;
+END $$;
 
 -- Step 9: Clean up function (optional - remove after successful migration)
 -- DROP FUNCTION IF EXISTS migrate_chinesename_credits();

@@ -1,3 +1,12 @@
+-- Ensure the updated_at trigger function exists before creating triggers
+create or replace function update_updated_at_column()
+returns trigger as $$
+begin
+    new.updated_at = timezone('utc'::text, now());
+    return new;
+end;
+$$ language plpgsql;
+
 -- Create generation_batches table to store each generation session
 create table public.generation_batches (
     id uuid primary key default uuid_generate_v4(),
